@@ -8,6 +8,7 @@ pragma solidity >=0.7.0 <0.9.0;
  */
 contract Afrida {
     uint8 quoram = 2; // 50% of total votes to release funds
+    uint8 commision = 5; // 5% of total funds
     address public admin;
 
     constructor() {
@@ -21,33 +22,127 @@ contract Afrida {
         _;
     }
 
-    modifier onlyDonor(address user) {
-        require(msg.sender == user);
+    modifier onlyDonor(address donation, address doner) {
+        require(donations[donation].votes[doner].weight > 0);
+        _;
+    }
+
+    modifier onlyDonee(address donee) {
+        require(msg.sender == admin || msg.sender == donations[donee].withdrawal);
         _;
     }
 
     //events
     event DonationRecieved(uint amount, address from);
+    event DonationCreated(address by);
     //types
     struct Voter {
-        uint weight; // weight is accumulated by delegation
+        uint8 weight; // weight is accumulated by delegation
+        uint amount; // weight is accumulated by delegation
         bool voted;  // if true, that person already voted
         address delegate; // person delegated to
         bool vote;   // index of the voted proposal
     }
 
     struct Donation{
+        address payable  withdrawal;
         uint target; // amount that must me achieved otherwise reimbursement
-        uint amount;
-        uint vote;
+        uint amount; // total amount held by contract
+        uint[] steps; // disbursement amount steps
+        uint8 step; // current stage of disbursement
+        uint8 doners; // total number of doners
+        uint vote; // total weight of votes
         mapping(address => Voter) votes;
     }
 
     mapping(address => Donation) public donations;
 
-    function delegateTo(address voter) onlyDonor(msg.sender) onlyDonor(voter) public {}
-    function refund(address voter) public {}
+    function createDonation() public payable {
+        require(donations[msg.sender].amount>0, "Donation exist");
+        require(msg.value>0, "Donation seed must be greater than 0");
+        donations[msg.sender].amount += msg.value;
+    }
+
+    function delegateTo(address voter, address donation) onlyDonor(donation, voter) public {
+        require((donations[donation].votes[msg.sender].weight>0 && donations[donation].votes[msg.sender].voted==false), "Invalid user");
+        donations[donation].votes[msg.sender].voted = true;
+        donations[donation].votes[voter].weight += donations[donation].votes[msg.sender].weight;
+    }
+
+    function voteFor(address donation) onlyDonor(donation, msg.sender) public {
+        donations[donation].votes[msg.sender].voted = true;
+        donations[donation].vote += donations[donation].votes[msg.sender].weight;
+    }
+
+    function getVotes(address donation) public view returns (uint){
+        return donations[donation].vote;
+    }
+
+    function donate(address donee) public payable {
+        donations[donee].amount += msg.value;
+        donations[donee].votes[msg.sender].weight += 1;
+        donations[donee].votes[msg.sender].amount = msg.value;
+        donations[donee].doners++;
+        emit DonationRecieved(msg.value, msg.sender);
+    }
+
+    function refund(address payable voter, address donation) public {
+        require(donations[donation].votes[voter].amount>0, "Invalid user");
+        require(donations[donation].amount-getCommision(donation)>donations[donation].votes[voter].amount, "Insufficient funds in contract, try again later");
+        voter.transfer(donations[donation].votes[voter].amount);
+        donations[donation].amount -= donations[donation].votes[voter].amount;
+        donations[donation].votes[voter].amount = 0;
+        donations[donation].votes[voter].weight = 0;
+    }
+    function checkQuoram(address donation) internal view returns (bool) {
+        return donations[donation].vote >= donations[donation].doners/quoram;
+    }
+    function getCommision(address donation) internal pure returns (uint) {
+    }
+
+    function release(address withdraw) onlyDonee(withdraw) public {
+        require(donations[withdraw].amount-getCommision(withdraw)>0, "Insufficient funds");
+        require(checkQuoram(msg.sender),"Voters quorum not reached");
+        donations[withdraw].withdrawal.transfer(donations[withdraw].steps[donations[withdraw].step]);
+        donations[withdraw].amount -= donations[withdraw].steps[donations[withdraw].step];
+        donations[withdraw].step++;
+    }
+
+    function getMyDonation() public view returns (// returns donees donation
+        address withdrawal,
+        uint target,
+        uint amount,
+        uint[] memory steps,
+        uint8 step,
+        uint8 doners,
+        uint vote
+    ) {
+        Donation storage donation = donations[msg.sender];
+        return (
+            donation.withdrawal,
+            donation.target,
+            donation.amount,
+            donation.steps,
+            donation.step,
+            donation.doners,
+            donation.vote
+        );
+    }
+
+    // admin related funtions
     function changeOwner(address newOwner) onlyOwner public {
         admin = newOwner;
+    }
+    function getCommision() onlyOwner public view returns (uint8) {
+        return  commision;
+    }
+    function setCommision(uint8 newCommision) onlyOwner public {
+        commision = newCommision;
+    }
+    function getQuorum() onlyOwner public view  returns (uint8) {
+        return  quoram;
+    }
+    function setQuorum(uint8 newQuorum) onlyOwner public {
+        quoram = newQuorum;
     }
 }
