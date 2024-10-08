@@ -7,7 +7,7 @@ pragma solidity >=0.7.0 <0.9.0;
  * @dev Implements donation process and fund disbursement
  */
 contract Afrida {
-    uint8 quoram = 2; // 50% of total votes to release funds
+    int8 quoram = 2; // 50% of total votes to release funds
     uint8 commision = 5; // 5% of total funds
     address public admin;
 
@@ -18,17 +18,17 @@ contract Afrida {
     //modifiers
 
     modifier onlyOwner {
-        require(msg.sender == admin);
+        require(msg.sender == admin, "Only owner can interact with contract");
         _;
     }
 
     modifier onlyDonor(address donation, address doner) {
-        require(donations[donation].votes[doner].weight > 0);
+        require(donations[donation].votes[doner].weight > 0, "Only doners can interact with contract");
         _;
     }
 
     modifier onlyDonee(address donee) {
-        require(msg.sender == admin || msg.sender == donations[donee].withdrawal);
+        require(msg.sender == admin || msg.sender == donations[donee].withdrawal, "Only donation owner can interact with contract");
         _;
     }
 
@@ -37,11 +37,11 @@ contract Afrida {
     event DonationCreated(address by);
     //types
     struct Voter {
-        uint8 weight; // weight is accumulated by delegation
+        int8 weight; // weight is accumulated by delegation
         uint amount; // weight is accumulated by delegation
         bool voted;  // if true, that person already voted
         address delegate; // person delegated to
-        bool vote;   // index of the voted proposal
+        uint8 step;
     }
 
     struct Donation{
@@ -50,31 +50,42 @@ contract Afrida {
         uint amount; // total amount held by contract
         uint[] steps; // disbursement amount steps
         uint8 step; // current stage of disbursement
-        uint8 doners; // total number of doners
-        uint vote; // total weight of votes
+        int8 doners; // total number of doners
+        int8 vote; // total weight of votes
         mapping(address => Voter) votes;
     }
 
     mapping(address => Donation) public donations;
 
     function createDonation() public payable {
-        require(donations[msg.sender].amount>0, "Donation exist");
+        // require(donations[msg.sender].amount>1 gwei, "Donation exist");
         require(msg.value>0, "Donation seed must be greater than 0");
         donations[msg.sender].amount += msg.value;
+        donations[msg.sender].withdrawal = payable(msg.sender);
+    }
+
+    function setWithdrawal(address payable withdrawal) onlyDonee(msg.sender) public {
+        donations[msg.sender].withdrawal = withdrawal;
     }
 
     function delegateTo(address voter, address donation) onlyDonor(donation, voter) public {
         require((donations[donation].votes[msg.sender].weight>0 && donations[donation].votes[msg.sender].voted==false), "Invalid user");
         donations[donation].votes[msg.sender].voted = true;
+        donations[donation].votes[msg.sender].delegate = voter;
         donations[donation].votes[voter].weight += donations[donation].votes[msg.sender].weight;
     }
 
-    function voteFor(address donation) onlyDonor(donation, msg.sender) public {
+    function voteFor(address donation, bool choice) onlyDonor(donation, msg.sender) public {
+        require(donations[donation].votes[msg.sender].voted==false, "Already voted");
         donations[donation].votes[msg.sender].voted = true;
-        donations[donation].vote += donations[donation].votes[msg.sender].weight;
+        if(choice){
+            donations[donation].vote += donations[donation].votes[msg.sender].weight;
+        } else {
+            donations[donation].vote -= donations[donation].votes[msg.sender].weight;
+        }
     }
 
-    function getVotes(address donation) public view returns (uint){
+    function getVotes(address donation) public view returns (int8){
         return donations[donation].vote;
     }
 
@@ -100,22 +111,22 @@ contract Afrida {
     function getCommision(address donation) internal pure returns (uint) {
     }
 
-    function release(address withdraw) onlyDonee(withdraw) public {
-        require(donations[withdraw].amount-getCommision(withdraw)>0, "Insufficient funds");
-        require(checkQuoram(msg.sender),"Voters quorum not reached");
-        donations[withdraw].withdrawal.transfer(donations[withdraw].steps[donations[withdraw].step]);
-        donations[withdraw].amount -= donations[withdraw].steps[donations[withdraw].step];
-        donations[withdraw].step++;
+    function release(address donation) onlyDonee(donation) public {
+        require(donations[donation].amount-getCommision(donation)>0, "Insufficient funds");
+        require(checkQuoram(donation),"Voters quorum not reached");
+        donations[donation].withdrawal.transfer(donations[donation].steps[donations[donation].step]);
+        donations[donation].amount -= donations[donation].steps[donations[donation].step];
+        donations[donation].step++;
     }
 
-    function getMyDonation() public view returns (// returns donees donation
+    function getDonation() public view returns (// returns donees donation
         address withdrawal,
         uint target,
         uint amount,
         uint[] memory steps,
         uint8 step,
-        uint8 doners,
-        uint vote
+        int8 doners,
+        int vote
     ) {
         Donation storage donation = donations[msg.sender];
         return (
@@ -129,6 +140,23 @@ contract Afrida {
         );
     }
 
+    function getMyDonation(address donation) public view returns (// returns donees donation
+        int8 weight,
+        uint amount,
+        bool voted,
+        address delegate,
+        uint8 step
+    ) {
+        Voter storage voter = donations[donation].votes[msg.sender];
+        return (
+            voter.weight,
+            voter.amount,
+            voter.voted,
+            voter.delegate,
+            voter.step
+        );
+    }
+
     // admin related funtions
     function changeOwner(address newOwner) onlyOwner public {
         admin = newOwner;
@@ -139,10 +167,10 @@ contract Afrida {
     function setCommision(uint8 newCommision) onlyOwner public {
         commision = newCommision;
     }
-    function getQuorum() onlyOwner public view  returns (uint8) {
+    function getQuorum() onlyOwner public view  returns (int8) {
         return  quoram;
     }
-    function setQuorum(uint8 newQuorum) onlyOwner public {
+    function setQuorum(int8 newQuorum) onlyOwner public {
         quoram = newQuorum;
     }
 }
